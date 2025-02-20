@@ -4,6 +4,6 @@ matplotlib
 numpy
 pandas
 scipy
-sklearn
+scikit-learn
 plotly
 sqlite3
