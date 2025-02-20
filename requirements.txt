@@ -6,4 +6,4 @@ pandas
 scipy
 scikit-learn
 plotly
-sqlite3
+sqlite
