@@ -1056,6 +1056,6 @@ def update_feature_selection(select_all_clicks, select_dpg_clicks, select_npg_cl
     return current_selection
 
 # Run the Dash app
-if __name__ == '__main__':
-    app.run_server(debug=True)
+if __name__ == "__main__":
+    app.run_server(debug=True, host="0.0.0.0", port=8080)
 
