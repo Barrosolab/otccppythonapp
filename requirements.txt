@@ -6,4 +6,3 @@ pandas
 scipy
 scikit-learn
 plotly
-sqlite
