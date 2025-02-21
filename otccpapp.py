@@ -63,6 +63,43 @@ def create_tables():
     conn.commit()
     conn.close()
 
+def reset_and_create_tables():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Drop existing tables to reset
+    cursor.execute("DROP TABLE IF EXISTS Analysis")
+    cursor.execute("DROP TABLE IF EXISTS UploadedData")
+    cursor.execute("DROP TABLE IF EXISTS ProcessedData")
+    cursor.execute("DROP TABLE IF EXISTS MergedData")
+
+    # Recreate tables
+    cursor.execute('''CREATE TABLE Analysis (
+                        id INTEGER PRIMARY KEY,
+                        analysis_name TEXT,
+                        date TEXT,
+                        num_cells INTEGER,
+                        status TEXT
+                    )''')
+    cursor.execute('''CREATE TABLE UploadedData (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filename TEXT,
+                        content TEXT
+                    )''')
+    cursor.execute('''CREATE TABLE ProcessedData (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filename TEXT,
+                        content TEXT
+                    )''')
+    cursor.execute('''CREATE TABLE MergedData (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        merged_filename TEXT,
+                        data TEXT
+                    )''')
+
+    conn.commit()
+    conn.close()
+    
 create_tables()
 
 # App layout
@@ -124,7 +161,7 @@ app.layout = html.Div([
                 html.Div(id="merge-output"),
 
                 html.H4("View Data", style={"color": "#34495E", "marginTop": "20px"}),
-                html.Button("View Uploaded Files", id="view-files-button", n_clicks=0, style={
+                html.Button("clear database", id="clear-database", n_clicks=0, style={
                     "width": "100%", "marginBottom": "5px", "backgroundColor": "#2980B9", "color": "white", "border": "none", "padding": "10px", "borderRadius": "5px"
                 }),
                 html.Button("View Merged Data", id="view-merged-button", n_clicks=0, style={
@@ -317,6 +354,7 @@ app.layout = html.Div([
 
                 ], style={"padding": "10px 0"}),
 
+                html.Div(id='dummy-output', style={'display': 'none'}),
 
                 # Dropdown for selecting y (label)
                 html.Div([
@@ -413,11 +451,11 @@ def secondary_processing(df):
     processed_df["bboo_x"] = np.array([row[featureList.index('BoundingBoxOO Length A')] for row in figures])
     processed_df["bboo_y"] = np.array([row[featureList.index('BoundingBoxOO Length B')] for row in figures])
     processed_df["bboo_z"] = np.array([row[featureList.index('BoundingBoxOO Length C')] for row in figures])
-    #processed_df["pos_x"] = np.array([row[featureList.index('Position X Reference Frame')] for row in figures])
-    #processed_df["pos_y"] = np.array([row[featureList.index('Position Y Reference Frame')] for row in figures])
-    #processed_df["pos_z"] = np.array([row[featureList.index('Position Z Reference Frame')] for row in figures])
+    processed_df["pos_x"] = np.array([row[featureList.index('Position X Reference Frame')] for row in figures])
+    processed_df["pos_y"] = np.array([row[featureList.index('Position Y Reference Frame')] for row in figures])
+    processed_df["pos_z"] = np.array([row[featureList.index('Position Z Reference Frame')] for row in figures])
     processed_df["Distance from Origin"] = np.array([row[featureList.index('Distance from Origin')] for row in figures])
-    #processed_df["Shortest Distance to Surfaces"] = np.array([row[featureList.index('Position Z')] for row in figures])
+    processed_df["Shortest Distance to Surfaces"] = np.array([row[featureList.index('Position Z')] for row in figures])
     processed_df["Triangles"] = np.array([row[featureList.index('Number of Triangles')] for row in figures])
     processed_df["Voxels"] = np.array([row[featureList.index('Number of Voxels')] for row in figures])
     processed_df["Sphericity"] = np.array([row[featureList.index('Sphericity')] for row in figures])
@@ -430,7 +468,14 @@ def secondary_processing(df):
     warnings.warn(f"{num_rows}")
     objectID = np.arange(num_rows).reshape(-1, 1).ravel().tolist()
 
-
+    ci = (processed_df["area"] ** 3) / (16 * (np.pi ** 2) * (processed_df["volume"] ** 2))
+    processed_df["CI"] = ci
+    mbi_aa = processed_df["bbaa_x"]/ processed_df["bbaa_z"]
+    processed_df["BI_AA"] = mbi_aa
+    mbi_oo = processed_df["bboo_x"] / processed_df["bboo_z"]
+    processed_df["BI_OO"] = mbi_oo
+    polarity = np.arctan2(processed_df["pos_y"], processed_df["pos_z"])
+    processed_df["polarity"] = polarity
 
     cellnum = objectID.count(0)
     mmdist_data = []
@@ -497,12 +542,19 @@ def secondary_processing(df):
     processed_df['Sum Dist'] =  sum_mmdist
     processed_df['Skewness'] =  skewness_mmdist
     processed_df['Kurtosis Dist'] =  kurtosis_mmdist
+    
+    processed_df['Sum Dist * Vol'] =  sum_mmdist * processed_df['volume']
+    processed_df['Sum Dist * Pos Z'] =  sum_mmdist * processed_df['pos_z']
+    
+    processed_df['Sum Dist / Vol'] =  sum_mmdist / processed_df['volume']
+    processed_df['Sum Dist / Pos Z'] =  sum_mmdist / processed_df['pos_z']
 
     
 
     # Truncate the "label" column to match the length of "Oblate"
     processed_df["Nucleus"] = np.array([row[featureList.index('label')] for row in figures])[:len(processed_df["Oblate"])]
-
+    nucleus_values = processed_df["Nucleus"][0]
+    processed_df["Nucleus"] = np.resize(nucleus_values, num_rows)
     processed_df['label'] = processed_df['Nucleus'].str.split(' ').str[0]
     processed_df['cell_number'] = processed_df['Nucleus'].str.extract(r'Cell (\d+)')
 
@@ -621,8 +673,9 @@ def merge_files(n_clicks):
 
 # Callback to display merged data in a table
 @app.callback(
-    Output('merged-data-table', 'data'),
-    Input('view-merged-button', 'n_clicks')
+    Output('merged-data-table','data'),
+    Input('view-merged-button', 'n_clicks'),
+    prevent_initial_call=True
 )
 
 
@@ -648,6 +701,25 @@ def display_merged_data(n_clicks):
 
     finally:
         conn.close()
+
+
+# # Callback to display merged data in a table
+@app.callback(
+        
+    Output('dummy-output', "children"),
+    Input('clear-database', 'n_clicks')
+)
+
+
+def clear_data(n_clicks):
+    try:
+        reset_and_create_tables()
+        return []
+        
+    except Exception as e:
+        return []
+
+   
 
 @app.callback(
     [Output('pivot-index', 'options'),
@@ -814,7 +886,7 @@ def train_random_forest(n_clicks, feature_columns, label_column, view_clicks):
             annotation_text=z_text,
             colorscale="Blues"
         )
-        conf_matrix_fig.update_lafyout(
+        conf_matrix_fig.update_layout(
             title="Confusion Matrix (Cross-Validated)",
             xaxis_title="Predicted Labels",
             yaxis_title="True Labels"
@@ -996,5 +1068,10 @@ def update_feature_selection(select_all_clicks, select_dpg_clicks, select_npg_cl
 
     return current_selection
 
+# Run the Dash app
+# if __name__ == '__main__':
+#     app.run_server(debug=True)
 
 
+
+#cetuximab, pertuzimab
